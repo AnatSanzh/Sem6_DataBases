@@ -10,6 +10,7 @@
   "license": "ISC",
   "dependencies": {
     "xmldom": "^0.2.1",
-    "xpath.js": "^1.1.0"
+    "xpath.js": "^1.1.0",
+    "xslt-processor": "^0.11.5"
   }
 }

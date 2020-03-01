@@ -3,7 +3,11 @@ const rawXPathSelect = require('xpath.js');
 const getHtml = require('./get-html');
 const saveDom = require('./save-dom');
 const { DOMParser } = require('xmldom');
+const { xsltProcess, xmlParse } = require('xslt-processor');
+const fs = require('fs');
 
+
+const isUrlAbsolute = (url) => url.includes("://");
 
 async function getHtmls(url, number){
 	const results = [ ];
@@ -92,9 +96,11 @@ const addr1 = "https://www.w3schools.com", addr2 = "https://tennismag.com.ua";
 	items.forEach( itemNode => {
 		const itemElem = part1Document.createElement('item');
 
-		const imgUrl = rawXPathSelect(itemNode, "./div[contains(@class,'bxr-element-image')]//img/@src")[0].value;
+		let imgUrl = rawXPathSelect(itemNode, "./div[contains(@class,'bxr-element-image')]//img/@src")[0].value;
 		const costText = rawXPathSelect(itemNode, "(./div[contains(@class,'bxr-element-price')]//span[contains(@class,'bxr-market-current-price')])[1]/text()")[0].data;
 		const nameText = rawXPathSelect(itemNode, "./div[contains(@class,'bxr-element-name')]//a/@title")[0].value;
+
+		if(!isUrlAbsolute(imgUrl)) imgUrl = addr2+imgUrl;
 
 		itemElem.setAttribute("cost", costText);
 		itemElem.setAttribute("imageUrl", imgUrl);
@@ -103,8 +109,12 @@ const addr1 = "https://www.w3schools.com", addr2 = "https://tennismag.com.ua";
 		part3Document.documentElement.appendChild(itemElem);
 	});
 
-	saveDom(part3Document, "part3.xml");
+	const part3XML = saveDom(part3Document, "part3.xml");
 
 	// part4
-	
+	fs.readFile("template.xslt", 'utf8', (err, data) => {
+		const xhtmlString = xsltProcess(xmlParse(part3XML), xmlParse(data));
+
+		fs.writeFile("part4.html", xhtmlString, () => 0);
+	});
 })();

@@ -2,5 +2,7 @@ const fs = require('fs');
 const { XMLSerializer } = require('xmldom');
 
 module.exports = (dom, filename) => {
-	fs.writeFile(filename, new XMLSerializer().serializeToString(dom), () => 0);
+	const str = new XMLSerializer().serializeToString(dom);
+	fs.writeFile(filename, str, () => 0);
+	return str;
 };
