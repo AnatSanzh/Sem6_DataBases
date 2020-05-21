@@ -1,4 +1,13 @@
 module.exports = {
+	getClient: async function(redis, host, port){
+		const client = redis.createClient(port, host);
+		
+		return new Promise((res, rej) => {
+			client.on('connect', () => res(client));
+			client.on('error', rej);
+		});
+	},
+
 	incrNumAsString: async function(client, key, value){
 		return new Promise((res, rej) => {
 			client.incrby(key, value, function(err, newValue) {

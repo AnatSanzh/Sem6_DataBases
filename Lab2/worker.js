@@ -1,6 +1,7 @@
 //const { detectSpam } = require('./utilities/detect-spam');
 const redis = require('redis');
 const redisUtils = require('./utilities/redis-utils');
+const terminalTitle = require('./utilities/terminal-title');
 
 function sleep(ms) {
   return new Promise((resolve) => {
@@ -14,31 +15,23 @@ function getRandomArbitrary(min, max) {
 
 (async function(){
 	const port="6379", host="127.0.0.1";
-	const client = redis.createClient(port, host);
+	const clientPub = await redisUtils.getClient(redis, host, port),
+		  clientSub = await redisUtils.getClient(redis, host, port);
+
+	terminalTitle("Worker");
+
+	clientSub.on("message", async (channel, messageId) => {
+		const message = await redisUtils.getHM(clientPub, messageId);
 
 
-	try{
-		await (new Promise((res, rej) => {
-			client.on('connect', res);
-			client.on('error', rej);
-		}));
-	}catch(e){
-		console.log("Error: " + e);
-		return;
-	}
-	
-
-	client.on("message",async (channel, messageId) => {
-		const message = await redisUtils.getHM(client, messageId);
-
-		await redisUtils.setHM(client, message.id, {
+		await redisUtils.setHM(clientPub, messageId, {
 			status: redisUtils.getMessageStatuses()[2]
 		});
 
 		//message.spamProbability = detectSpam(message.text);
 		await sleep(getRandomArbitrary(3,5));
 		
-		client.publish(redisUtils.getProcessedMessageChannel(), JSON.stringify({
+		clientPub.publish(redisUtils.getProcessedMessageChannel(), JSON.stringify({
 			id: messageId,
 			spam: Math.random() > 0.75,
 			to: message.to,
@@ -46,5 +39,5 @@ function getRandomArbitrary(min, max) {
 		}));
 	});
 
-	client.subscribe(redisUtils.getUnprocessedMessageChannel());
+	clientSub.subscribe(redisUtils.getUnprocessedMessageChannel());
 })();

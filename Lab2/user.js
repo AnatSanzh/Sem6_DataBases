@@ -2,6 +2,7 @@ const prompt = require('./utilities/prompt');
 const redis = require('redis');
 const redisUtils = require('./utilities/redis-utils');
 const uuid = require('uuid');
+const terminalTitle = require('./utilities/terminal-title');
 
 /*
 2.1. Звичайний користувач:
@@ -20,7 +21,7 @@ N найактивніших “спамерів” із відповідною 
 const userMenu = [
 	{
 		title: "Exit",
-		response: function(context){
+		response:async function(context){
 			context.client.publish(redisUtils.getRawActionChannel(), JSON.stringify({
 				type: "logout",
 				from: context.login
@@ -31,7 +32,7 @@ const userMenu = [
 	},
 	{
 		title: "Send Message",
-		response: function(context){
+		response:async function(context){
 			const receiver = await prompt("Receiver of message: ");
 
 			if(!(await redisUtils.keyExists(
@@ -67,23 +68,26 @@ const userMenu = [
 
 			await redisUtils.incrValueSortedList(context.client, redisUtils.getActiveUserListKey(), context.login, 1);
 			await redisUtils.addList(context.client, redisUtils.getSentMessageIDListKey(context.login), newMessageKey);
-
-			await prompt("Enter to continue");
 		}
 	},
 	{
 		title: "Read Message",
-		response: function(context){
+		response:async function(context){
 			const indexHolderKey = redisUtils.getCurrentReceivedMessageIDIndexKey(context.login);
 			let listIndex = await redisUtils.getString(context.client, indexHolderKey);
 			let message, messageKey;
 
 			while(true){
-				messageKey = await redisUtils.getList(
+				messageKey = (await redisUtils.getList(
 					context.client,
 					redisUtils.getReceivedMessageIDListKey(context.login),
 					listIndex,listIndex
-				);
+				))[0];
+
+				if(messageKey === undefined){
+					console.log("No new messages");
+					return;
+				}
 
 				message = await redisUtils.getHM(context.client, messageKey);
 				
@@ -91,7 +95,7 @@ const userMenu = [
 					break;
 				}
 
-				listIndex++;
+				listIndex=new String(1+ new Number(listIndex));
 				await redisUtils.incrNumAsString(context.client, indexHolderKey, 1);
 			}
 
@@ -100,34 +104,32 @@ const userMenu = [
 			await redisUtils.setHM(context.client, messageKey, {
 				status: redisUtils.getMessageStatuses()[5]
 			});
-			await redisUtils.incrNumAsString(context.client, indexHolderKey, 1);
-
-			await prompt("Enter to continue");			
+			await redisUtils.incrNumAsString(context.client, indexHolderKey, 1);		
 		}
 	},
 	{
 		title: "View Message Count",
-		response: function(context){
-			const statuses = redisUtils.getMessageStatuses();
-			const statusCounts = statuses.map(() => 0);
+		response:async function(context){
+			const statusCounts = redisUtils.getMessageStatuses()
+			.reduce((obj, statusName)=>({...obj, [statusName]: 0}),{});
 
-			const messages = await redisUtils.getSortedList(
+			const messageKeys = await redisUtils.getList(
 				context.client,
 				redisUtils.getSentMessageIDListKey(context.login),
-				-1,0
+				0,-1
 			);
 
-			messages.forEach(val => {
-				statusCounts[statuses.find(el => el === val.status)]++;
-			});
+			for (var i = 0; i < messageKeys.length; i++) {
+				statusCounts[
+					(await redisUtils.getHM(context.client, messageKeys[i])).status
+				]++;
+			}
 
 			console.log("Message count: ");
 
-			statuses.forEach((val, ind) => {
-				console.log('"'+val+'": '+statusCounts[ind]);
-			});
-
-			await prompt("Enter to continue");
+			for (const status in statusCounts) {
+				console.log('"'+status+'": '+statusCounts[status]);	
+			}
 		}
 	}
 ];
@@ -135,19 +137,20 @@ const userMenu = [
 const adminAdditMenu = [
 	{
 		title: "Read Event Journal",
-		response: function(context){
-			const journal = await redisUtils.getSortedList(
+		response:async function(context){
+			const journal = await redisUtils.getList(
 				context.client,
 				redisUtils.getEventJournalKey(),
-				-1, 0
+				0,-1
 			);
 
 			journal.forEach((record,index) => {
 				let output = (index+1)+") ";
+				record = JSON.parse(record);
 
 				if(record.type === "spam"){
 					output +="Action:spam  Date:"+record.date+"  Sender:"+
-					record.from+"  Receiver:"+record.to+" Message_ID:"+record.id;
+					record.from+"  Receiver:"+record.to+"  Message_ID:"+record.id;
 				}else if(record.type === "login"){
 					output +="Action:login  Date:"+record.date+"  User:"+record.from;
 				}else if(record.type === "logout"){
@@ -156,13 +159,11 @@ const adminAdditMenu = [
 
 				console.log(output);
 			});
-
-			await prompt("Enter to continue");
 		}
 	},
 	{
 		title: "Read Active User List",
-		response: function(context){
+		response:async function(context){
 			const onlineUserList = await redisUtils.readSet(
 				context.client,
 				redisUtils.getOnlineUsersKey()
@@ -171,13 +172,11 @@ const adminAdditMenu = [
 			onlineUserList.forEach((userLogin, index) => {
 				console.log((index+1)+") '"+userLogin+"'");
 			});
-
-			await prompt("Enter to continue");
 		}
 	},
 	{
 		title: "View User Statistics",
-		response: function(context){
+		response:async function(context){
 			const count = new Number(await prompt("Enter count: "));
 
 			console.log("Top "+count+" active users:");
@@ -187,9 +186,6 @@ const adminAdditMenu = [
 			console.log("Top "+count+" spammers:");
 			(await redisUtils.readRevSortedList(context.client,redisUtils.getSpammerListKey(),0,count-1))
 			.forEach( (userLogin, index) => console.log((index+1)+") "+userLogin));
-
-
-			await prompt("Enter to continue");
 		}
 	}
 ];
@@ -197,18 +193,7 @@ const adminAdditMenu = [
 
 (async function(){
 	const port="6379", host="127.0.0.1";
-	const client = redis.createClient(port, host);
-
-
-	try{
-		await (new Promise((res, rej) => {
-			client.on('connect', res);
-			client.on('error', rej);
-		}));
-	}catch(e){
-		console.log("Error: " + e);
-		return;
-	}
+	const client = await redisUtils.getClient(redis, host, port);
 
 
 	let login = await prompt("\nEnter login: "), 
@@ -241,7 +226,7 @@ const adminAdditMenu = [
 			process.exit();
 		}
 	}else{
-		if(userData.isAdmin){
+		if(userData.isAdmin === "true"){
 			let	password = await prompt("\nEnter password: ");
 
 			if(password != userData.password)
@@ -254,6 +239,8 @@ const adminAdditMenu = [
 		}
 	}
 
+	terminalTitle("User: "+login);
+
 	client.publish(redisUtils.getRawActionChannel(), JSON.stringify({
 		type: "login",
 		from: login
@@ -265,17 +252,24 @@ const adminAdditMenu = [
 	while(true){
 		console.clear();
 
+		console.log("User: "+login);
 		console.log("Options:");
 
 		menu.forEach( ({title},idx) => console.log((idx+1) + ") " + title) );
 
-		const selectedOptionIdx = new Integer(await prompt("\n> ")) - 1;
+		const selectedOptionIdx = new Number(await prompt("\n> ")) - 1;
 
 		if(selectedOptionIdx == undefined || selectedOptionIdx < 0 || selectedOptionIdx >= menu.length){
 			await prompt("Selected invalid option!");
 			continue;
 		}
 
-		menu[selectedOptionIdx].response(context);
+		try{
+			await menu[selectedOptionIdx].response(context);
+		}catch(err){
+			console.log(err);
+		}
+
+		await prompt("Enter to continue");
 	}
 })();
