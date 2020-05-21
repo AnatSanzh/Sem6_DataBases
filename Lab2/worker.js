@@ -1,6 +1,16 @@
-const { detectSpam } = require('./utilities/detect-spam');
+//const { detectSpam } = require('./utilities/detect-spam');
 const redis = require('redis');
 const redisUtils = require('./utilities/redis-utils');
+
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function getRandomArbitrary(min, max) {
+  return Math.random() * (max - min) + min;
+}
 
 (async function(){
 	const port="6379", host="127.0.0.1";
@@ -18,12 +28,22 @@ const redisUtils = require('./utilities/redis-utils');
 	}
 	
 
-	client.on("message", (channel, messageText) => {
-		const message = JSON.parse(messageText);
+	client.on("message",async (channel, messageId) => {
+		const message = await redisUtils.getHM(client, messageId);
 
-		message.spamProbability = detectSpam(message.text);
+		await redisUtils.setHM(client, message.id, {
+			status: redisUtils.getMessageStatuses()[2]
+		});
 
-		client.publish(redisUtils.getProcessedMessageChannel(), JSON.stringify(message));
+		//message.spamProbability = detectSpam(message.text);
+		await sleep(getRandomArbitrary(3,5));
+		
+		client.publish(redisUtils.getProcessedMessageChannel(), JSON.stringify({
+			id: messageId,
+			spam: Math.random() > 0.75,
+			to: message.to,
+			from: message.from
+		}));
 	});
 
 	client.subscribe(redisUtils.getUnprocessedMessageChannel());
