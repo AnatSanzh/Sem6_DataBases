@@ -1,0 +1,2 @@
+node worker.js
+pause

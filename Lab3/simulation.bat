@@ -1,0 +1,2 @@
+node simulation.js
+pause
